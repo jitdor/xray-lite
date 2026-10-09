@@ -8,24 +8,17 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
-	"reflect"
-	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/apernet/quic-go"
-	"github.com/apernet/quic-go/http3"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/net"
-	"github.com/xtls/xray-core/common/net/cnc"
 	"github.com/xtls/xray-core/common/signal/done"
 	"github.com/xtls/xray-core/transport/internet"
-	"github.com/xtls/xray-core/transport/internet/hysteria/congestion"
-	"github.com/xtls/xray-core/transport/internet/hysteria/congestion/bbr"
 	"github.com/xtls/xray-core/transport/internet/reality"
 	"github.com/xtls/xray-core/transport/internet/stat"
 	"github.com/xtls/xray-core/transport/internet/tls"
@@ -96,9 +89,6 @@ func createHTTPClient(dest net.Destination, streamSettings *internet.MemoryStrea
 	realityConfig := reality.ConfigFromStreamSettings(streamSettings)
 
 	httpVersion := decideHTTPVersion(tlsConfig, realityConfig)
-	if httpVersion == "3" {
-		dest.Network = net.Network_UDP // better to keep this line
-	}
 
 	var gotlsConfig *gotls.Config
 
@@ -145,99 +135,7 @@ func createHTTPClient(dest net.Destination, streamSettings *internet.MemoryStrea
 
 	var transport http.RoundTripper
 
-	if httpVersion == "3" {
-		quicParams := streamSettings.QuicParams
-		if quicParams == nil {
-			quicParams = &internet.QuicParams{
-				BbrProfile: string(bbr.ProfileStandard),
-			}
-		}
-
-		quicConfig := &quic.Config{
-			InitialStreamReceiveWindow:     quicParams.InitStreamReceiveWindow,
-			MaxStreamReceiveWindow:         quicParams.MaxStreamReceiveWindow,
-			InitialConnectionReceiveWindow: quicParams.InitConnReceiveWindow,
-			MaxConnectionReceiveWindow:     quicParams.MaxConnReceiveWindow,
-			MaxIdleTimeout:                 time.Duration(quicParams.MaxIdleTimeout) * time.Second,
-			KeepAlivePeriod:                time.Duration(quicParams.KeepAlivePeriod) * time.Second,
-			MaxIncomingStreams:             quicParams.MaxIncomingStreams,
-			DisablePathMTUDiscovery:        quicParams.DisablePathMtuDiscovery || (runtime.GOOS != "linux" && runtime.GOOS != "windows" && runtime.GOOS != "darwin"),
-			ChromeParrot:                   !quicParams.DisableChromeParrot,
-		}
-		if quicParams.MaxIdleTimeout == 0 {
-			quicConfig.MaxIdleTimeout = net.ConnIdleTimeout
-		}
-		if quicParams.KeepAlivePeriod == 0 {
-			if keepAlivePeriod == 0 {
-				quicConfig.KeepAlivePeriod = net.QuicgoH3KeepAlivePeriod
-			} else if keepAlivePeriod > 0 {
-				quicConfig.KeepAlivePeriod = keepAlivePeriod
-			}
-		}
-		if quicParams.MaxIncomingStreams == 0 {
-			// these two are defaults of quic-go/http3. the default of quic-go (no
-			// http3) is different, so it is hardcoded here for clarity.
-			// https://github.com/quic-go/quic-go/blob/b8ea5c798155950fb5bbfdd06cad1939c9355878/http3/client.go#L36-L39
-			quicConfig.MaxIncomingStreams = -1
-		}
-
-		transport = &http3.Transport{
-			QUICConfig:      quicConfig,
-			TLSClientConfig: gotlsConfig,
-			Dial: func(ctx context.Context, addr string, tlsCfg *gotls.Config, cfg *quic.Config) (*quic.Conn, error) {
-				var pktConn net.PacketConn
-				var udpAddr net.Addr
-				if streamSettings.FinalMask != nil {
-					conn, err := streamSettings.FinalMask.DialUDP(ctx, dest)
-					if err != nil {
-						return nil, errors.New("failed to dial to dest").Base(err)
-					}
-					pktConn = conn.(*net.PacketConnWrapper).PacketConn
-					udpAddr = conn.RemoteAddr()
-				} else {
-					conn, err := internet.DialSystem(ctx, dest, streamSettings.SocketSettings)
-					if err != nil {
-						return nil, errors.New("failed to dial to dest").Base(err)
-					}
-					switch c := conn.(type) {
-					case *net.PacketConnWrapper:
-						pktConn = c.PacketConn
-						udpAddr = c.RemoteAddr()
-					case *cnc.Connection:
-						pktConn = &internet.FakePacketConn{Conn: c}
-						udpAddr = &net.UDPAddr{IP: []byte{0, 0, 0, 0}}
-					default:
-						panic(reflect.TypeOf(c))
-					}
-				}
-
-				tr := &quic.Transport{Conn: pktConn, DisableGSO: quicParams.DisableGSO}
-
-				if !quicParams.DisableChromeParrot {
-					tr.ConnectionIDGenerator = quic.ZeroLengthConnectionIDGenerator{}
-					tlsCfg.GetCertificate = nil
-				}
-
-				conn, err := tr.DialEarly(ctx, udpAddr, tlsCfg, cfg)
-				if err != nil {
-					return nil, err
-				}
-				context.AfterFunc(conn.Context(), func() { tr.Close(); pktConn.Close() })
-
-				switch quicParams.Congestion {
-				case "reno":
-				case "", "bbr":
-					congestion.UseBBR(conn, bbr.Profile(quicParams.BbrProfile))
-				case "force-brutal":
-					congestion.UseBrutal(conn, quicParams.BrutalUp, quicParams.BrutalDisableLossCompensation)
-				default:
-					panic(quicParams.Congestion)
-				}
-
-				return conn, nil
-			},
-		}
-	} else if httpVersion == "2" {
+	if httpVersion == "2" {
 		if keepAlivePeriod == 0 {
 			keepAlivePeriod = net.ChromeH2KeepAlivePeriod
 		}
@@ -289,7 +187,7 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
 
 	httpVersion := decideHTTPVersion(tlsConfig, realityConfig)
 	if httpVersion == "3" {
-		dest.Network = net.Network_UDP
+		return nil, errors.New(`XHTTP over HTTP/3 (alpn "h3") is not supported in this build; use h2 or http/1.1`)
 	}
 
 	transportConfiguration := streamSettings.ProtocolSettings.(*Config)
@@ -351,7 +249,7 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
 		realityConfig2 := reality.ConfigFromStreamSettings(memory2)
 		httpVersion2 := decideHTTPVersion(tlsConfig2, realityConfig2)
 		if httpVersion2 == "3" {
-			dest2.Network = net.Network_UDP
+			return nil, errors.New(`XHTTP over HTTP/3 (alpn "h3") is not supported in this build; use h2 or http/1.1`)
 		}
 		if tlsConfig2 != nil || realityConfig2 != nil {
 			requestURL2.Scheme = "https"

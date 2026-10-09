@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"io"
 
-	"github.com/apernet/quic-go/quicvarint"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
@@ -309,7 +308,7 @@ func hkdfExpandLabel(secret []byte, label string, length int) []byte {
 // we only handle QUIC Initial so these numbers should not exceed 65535
 // returns int32 to reduce type conversion
 func readShortQUICVarint(reader io.ByteReader) (int32, error) {
-	v, err := quicvarint.Read(reader)
+	v, err := readQUICVarint(reader)
 	if err != nil {
 		return 0, err
 	}
@@ -318,4 +317,22 @@ func readShortQUICVarint(reader io.ByteReader) (int32, error) {
 		return 0, errNotQUICInitial
 	}
 	return int32(v), nil
+}
+
+// readQUICVarint reads a QUIC variable-length integer (RFC 9000, section 16):
+// the two high bits of the first byte give the encoded length (1, 2, 4 or 8 bytes).
+func readQUICVarint(reader io.ByteReader) (uint64, error) {
+	first, err := reader.ReadByte()
+	if err != nil {
+		return 0, err
+	}
+	v := uint64(first & 0x3f)
+	for n := 1<<(first>>6) - 1; n > 0; n-- {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return 0, err
+		}
+		v = v<<8 | uint64(b)
+	}
+	return v, nil
 }

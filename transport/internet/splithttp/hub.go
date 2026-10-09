@@ -3,21 +3,17 @@ package splithttp
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	gotls "crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/apernet/quic-go"
-	"github.com/apernet/quic-go/http3"
 	goreality "github.com/xtls/reality"
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
@@ -26,8 +22,6 @@ import (
 	http_proto "github.com/xtls/xray-core/common/protocol/http"
 	"github.com/xtls/xray-core/common/signal/done"
 	"github.com/xtls/xray-core/transport/internet"
-	"github.com/xtls/xray-core/transport/internet/hysteria/congestion"
-	"github.com/xtls/xray-core/transport/internet/hysteria/congestion/bbr"
 	"github.com/xtls/xray-core/transport/internet/reality"
 	"github.com/xtls/xray-core/transport/internet/stat"
 	"github.com/xtls/xray-core/transport/internet/tls"
@@ -431,13 +425,10 @@ func (c *httpServerConn) Close() error {
 
 type Listener struct {
 	sync.Mutex
-	server     http.Server
-	h3server   *http3.Server
-	listener   net.Listener
-	h3listener http3.QUICListener
-	config     *Config
-	addConn    internet.ConnHandler
-	isH3       bool
+	server   http.Server
+	listener net.Listener
+	config   *Config
+	addConn  internet.ConnHandler
 }
 
 func ListenXH(ctx context.Context, address net.Address, port net.Port, streamSettings *internet.MemoryStreamConfig, addConn internet.ConnHandler) (internet.Listener, error) {
@@ -460,85 +451,26 @@ func ListenXH(ctx context.Context, address net.Address, port net.Port, streamSet
 		socketSettings: streamSettings.SocketSettings,
 	}
 	tlsConfig := getTLSConfig(streamSettings)
-	l.isH3 = len(tlsConfig.NextProtos) == 1 && tlsConfig.NextProtos[0] == "h3"
+	if len(tlsConfig.NextProtos) == 1 && tlsConfig.NextProtos[0] == "h3" {
+		return nil, errors.New(`XHTTP over HTTP/3 (alpn "h3") is not supported in this build; use h2 or http/1.1`)
+	}
 
 	var err error
-	if l.isH3 {
-		var pktConn net.PacketConn
-		var err error
-		if streamSettings.FinalMask != nil {
-			pktConn, err = streamSettings.FinalMask.ListenPacket(context.Background(), &net.UDPAddr{IP: address.IP(), Port: int(port)})
-		} else {
-			pktConn, err = internet.ListenSystemPacket(context.Background(), &net.UDPAddr{IP: address.IP(), Port: int(port)}, streamSettings.SocketSettings)
-		}
-		if err != nil {
-			return nil, errors.New("failed to listen UDP for XHTTP/3 on ", address, ":", port).Base(err)
-		}
-
-		quicParams := streamSettings.QuicParams
-		if quicParams == nil {
-			quicParams = &internet.QuicParams{
-				BbrProfile: string(bbr.ProfileStandard),
-			}
-		}
-
-		quicConfig := &quic.Config{
-			InitialStreamReceiveWindow:     quicParams.InitStreamReceiveWindow,
-			MaxStreamReceiveWindow:         quicParams.MaxStreamReceiveWindow,
-			InitialConnectionReceiveWindow: quicParams.InitConnReceiveWindow,
-			MaxConnectionReceiveWindow:     quicParams.MaxConnReceiveWindow,
-			MaxIdleTimeout:                 time.Duration(quicParams.MaxIdleTimeout) * time.Second,
-			MaxIncomingStreams:             quicParams.MaxIncomingStreams,
-			DisablePathMTUDiscovery:        quicParams.DisablePathMtuDiscovery || (runtime.GOOS != "linux" && runtime.GOOS != "windows" && runtime.GOOS != "darwin"),
-		}
-
-		var k *quic.StatelessResetKey
-		if !quicParams.DisableStatelessReset {
-			k = &quic.StatelessResetKey{}
-			common.Must2(rand.Read((*k)[:]))
-		}
-
-		tr := &quic.Transport{Conn: pktConn, DisableGSO: quicParams.DisableGSO, StatelessResetKey: k}
-
-		l.h3listener, err = tr.ListenEarly(tlsConfig, quicConfig)
-		if err != nil {
-			return nil, errors.New("failed to listen QUIC for XHTTP/3 on ", address, ":", port).Base(err)
-		}
-		l.h3listener = &QListener{
-			QUICListener: l.h3listener,
-			quicParams:   quicParams,
-		}
-		errors.LogInfo(ctx, "listening QUIC for XHTTP/3 on ", address, ":", port)
-
-		handler.localAddr = l.h3listener.Addr()
-
-		l.h3server = &http3.Server{
-			Handler: handler,
-		}
-		go func() {
-			if err := l.h3server.ServeListener(l.h3listener); err != nil {
-				errors.LogErrorInner(ctx, err, "failed to serve HTTP/3 for XHTTP/3")
-			}
-			_ = tr.Close()
-			_ = pktConn.Close()
-		}()
-	} else {
-		var addr net.Addr
-		if port == net.Port(0) { // unix
-			addr = &net.UnixAddr{Name: address.Domain(), Net: "unix"}
-		} else { // tcp
-			addr = &net.TCPAddr{IP: address.IP(), Port: int(port)}
-		}
-		if streamSettings.FinalMask != nil {
-			l.listener, err = streamSettings.FinalMask.Listen(ctx, addr)
-		} else {
-			l.listener, err = internet.ListenSystem(ctx, addr, streamSettings.SocketSettings)
-		}
-		if err != nil {
-			return nil, errors.New("failed to listen ", addr.Network(), " for XHTTP on ", address, ":", port).Base(err)
-		}
-		errors.LogInfo(ctx, "listening ", addr.Network(), " for XHTTP on ", address, ":", port)
+	var addr net.Addr
+	if port == net.Port(0) { // unix
+		addr = &net.UnixAddr{Name: address.Domain(), Net: "unix"}
+	} else { // tcp
+		addr = &net.TCPAddr{IP: address.IP(), Port: int(port)}
 	}
+	if streamSettings.FinalMask != nil {
+		l.listener, err = streamSettings.FinalMask.Listen(ctx, addr)
+	} else {
+		l.listener, err = internet.ListenSystem(ctx, addr, streamSettings.SocketSettings)
+	}
+	if err != nil {
+		return nil, errors.New("failed to listen ", addr.Network(), " for XHTTP on ", address, ":", port).Base(err)
+	}
+	errors.LogInfo(ctx, "listening ", addr.Network(), " for XHTTP on ", address, ":", port)
 
 	// tcp/unix (h1/h2)
 	if l.listener != nil {
@@ -575,9 +507,6 @@ func ListenXH(ctx context.Context, address net.Address, port net.Port, streamSet
 
 // Addr implements net.Listener.Addr().
 func (ln *Listener) Addr() net.Addr {
-	if ln.h3listener != nil {
-		return ln.h3listener.Addr()
-	}
 	if ln.listener != nil {
 		return ln.listener.Addr()
 	}
@@ -586,12 +515,10 @@ func (ln *Listener) Addr() net.Addr {
 
 // Close implements net.Listener.Close().
 func (ln *Listener) Close() error {
-	if ln.h3server != nil {
-		return ln.h3server.Close()
-	} else if ln.listener != nil {
+	if ln.listener != nil {
 		return ln.listener.Close()
 	}
-	return errors.New("listener does not have an HTTP/3 server or a net.listener")
+	return errors.New("listener does not have a net.listener")
 }
 
 func getTLSConfig(streamSettings *internet.MemoryStreamConfig) *gotls.Config {
@@ -604,26 +531,4 @@ func getTLSConfig(streamSettings *internet.MemoryStreamConfig) *gotls.Config {
 
 func init() {
 	common.Must(internet.RegisterTransportListener(protocolName, ListenXH))
-}
-
-type QListener struct {
-	http3.QUICListener
-	quicParams *internet.QuicParams
-}
-
-func (l *QListener) Accept(ctx context.Context) (*quic.Conn, error) {
-	conn, err := l.QUICListener.Accept(ctx)
-	if err != nil {
-		return nil, err
-	}
-	switch l.quicParams.Congestion {
-	case "reno":
-	case "", "bbr":
-		congestion.UseBBR(conn, bbr.Profile(l.quicParams.BbrProfile))
-	case "force-brutal":
-		congestion.UseBrutal(conn, l.quicParams.BrutalUp, l.quicParams.BrutalDisableLossCompensation)
-	default:
-		panic(l.quicParams.Congestion)
-	}
-	return conn, nil
 }

@@ -11,13 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/xtls/xray-core/common"
-	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/protocol/tls/cert"
 	"github.com/xtls/xray-core/testing/servers/tcp"
-	"github.com/xtls/xray-core/testing/servers/udp"
 	"github.com/xtls/xray-core/transport/internet"
 	. "github.com/xtls/xray-core/transport/internet/splithttp"
 	"github.com/xtls/xray-core/transport/internet/stat"
@@ -224,90 +221,6 @@ func Test_ListenXHAndDial_H2C(t *testing.T) {
 	}
 }
 
-func Test_ListenXHAndDial_QUIC(t *testing.T) {
-	if runtime.GOARCH == "arm64" {
-		return
-	}
-
-	listenPort := udp.PickPort()
-
-	start := time.Now()
-
-	ct, ctHash := cert.MustGenerate(nil, cert.CommonName("localhost"))
-
-	streamSettings := &internet.MemoryStreamConfig{
-		ProtocolName: "splithttp",
-		ProtocolSettings: &Config{
-			Path: "shs",
-		},
-		SecurityType: "tls",
-		SecuritySettings: &tls.Config{
-			Certificate:          []*tls.Certificate{tls.ParseCertificate(ct)},
-			PinnedPeerCertSha256: [][]byte{ctHash[:]},
-			NextProtocol:         []string{"h3"},
-		},
-	}
-
-	serverClosed := false
-	listen, err := ListenXH(context.Background(), net.LocalHostIP, listenPort, streamSettings, func(conn stat.Connection) {
-		go func() {
-			defer conn.Close()
-
-			b := buf.New()
-			defer b.Release()
-
-			for {
-				b.Clear()
-				if _, err := b.ReadFrom(conn); err != nil {
-					break
-				}
-				common.Must2(conn.Write(b.Bytes()))
-			}
-
-			serverClosed = true
-		}()
-	})
-	common.Must(err)
-	defer listen.Close()
-
-	time.Sleep(time.Second)
-
-	conn, err := Dial(context.Background(), net.UDPDestination(net.DomainAddress("localhost"), listenPort), streamSettings)
-	common.Must(err)
-
-	const N = 1024
-	b1 := make([]byte, N)
-	common.Must2(rand.Read(b1))
-	b2 := buf.New()
-
-	common.Must2(conn.Write(b1))
-
-	b2.Clear()
-	common.Must2(b2.ReadFullFrom(conn, N))
-	if r := cmp.Diff(b2.Bytes(), b1); r != "" {
-		t.Error(r)
-	}
-
-	common.Must2(conn.Write(b1))
-
-	b2.Clear()
-	common.Must2(b2.ReadFullFrom(conn, N))
-	if r := cmp.Diff(b2.Bytes(), b1); r != "" {
-		t.Error(r)
-	}
-
-	conn.Close()
-	time.Sleep(100 * time.Millisecond)
-	if !serverClosed {
-		t.Error("server did not get closed")
-	}
-
-	end := time.Now()
-	if !end.Before(start.Add(time.Second * 5)) {
-		t.Error("end: ", end, " start: ", start)
-	}
-}
-
 func Test_ListenXHAndDial_Unix(t *testing.T) {
 	tempDir := t.TempDir()
 	tempSocket := tempDir + "/server.sock"
@@ -464,4 +377,22 @@ func Test_maxUpload(t *testing.T) {
 	}
 
 	common.Must(listen.Close())
+}
+
+func Test_H3IsRejected(t *testing.T) {
+	streamSettings := &internet.MemoryStreamConfig{
+		ProtocolName:     "splithttp",
+		ProtocolSettings: &Config{Path: "shs"},
+		SecurityType:     "tls",
+		SecuritySettings: &tls.Config{NextProtocol: []string{"h3"}},
+	}
+
+	if _, err := ListenXH(context.Background(), net.LocalHostIP, net.Port(0), streamSettings, func(stat.Connection) {}); err == nil {
+		t.Fatal("ListenXH accepted alpn h3, want an error")
+	}
+
+	dest := net.TCPDestination(net.LocalHostIP, net.Port(1))
+	if _, err := Dial(context.Background(), dest, streamSettings); err == nil {
+		t.Fatal("Dial accepted alpn h3, want an error")
+	}
 }
