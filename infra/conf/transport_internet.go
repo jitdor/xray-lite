@@ -19,53 +19,29 @@ func (p TransportProtocol) Build() (string, error) {
 		return "tcp", nil
 	case "xhttp", "splithttp":
 		return "splithttp", nil
-	case "kcp", "mkcp":
-		return "mkcp", nil
-	case "grpc":
-		errors.PrintNonRemovalDeprecatedFeatureWarning("gRPC transport (with unnecessary costs, etc.)", "XHTTP stream-up H2")
-		return "grpc", nil
-	case "ws", "websocket":
-		errors.PrintNonRemovalDeprecatedFeatureWarning("WebSocket transport (with ALPN http/1.1, etc.)", "XHTTP H2 & H3")
-		return "websocket", nil
-	case "httpupgrade":
-		errors.PrintNonRemovalDeprecatedFeatureWarning("HTTPUpgrade transport (with ALPN http/1.1, etc.)", "XHTTP H2 & H3")
-		return "httpupgrade", nil
 	case "h2", "h3", "http":
 		return "", errors.PrintRemovedFeatureError("HTTP transport (without header padding, etc.)", "XHTTP stream-one H2 & H3")
 	case "quic":
 		return "", errors.PrintRemovedFeatureError("QUIC transport (without web service, etc.)", "XHTTP stream-one H3")
-	case "hysteria":
-		return "hysteria", nil
-	case "masque":
-		return "masque", nil
-	case "xdrive":
-		return "xdrive", nil
 	default:
 		return "", errors.New("Config: unknown transport protocol: ", p)
 	}
 }
 
 type StreamConfig struct {
-	Address             *Address           `json:"address"`
-	Port                uint16             `json:"port"`
-	Method              *TransportProtocol `json:"method"`
-	Network             *TransportProtocol `json:"network"`
-	Security            string             `json:"security"`
-	FinalMask           *FinalMask         `json:"finalmask"`
-	TLSSettings         *TLSConfig         `json:"tlsSettings"`
-	REALITYSettings     *REALITYConfig     `json:"realitySettings"`
-	RAWSettings         *TCPConfig         `json:"rawSettings"`
-	TCPSettings         *TCPConfig         `json:"tcpSettings"`
-	XHTTPSettings       *SplitHTTPConfig   `json:"xhttpSettings"`
-	SplitHTTPSettings   *SplitHTTPConfig   `json:"splithttpSettings"`
-	KCPSettings         *KCPConfig         `json:"kcpSettings"`
-	GRPCSettings        *GRPCConfig        `json:"grpcSettings"`
-	WSSettings          *WebSocketConfig   `json:"wsSettings"`
-	HTTPUPGRADESettings *HttpUpgradeConfig `json:"httpupgradeSettings"`
-	HysteriaSettings    *HysteriaConfig    `json:"hysteriaSettings"`
-	MASQUESettings      *MasqueConfig      `json:"masqueSettings"`
-	XDRIVESettings      *XDriveConfig      `json:"xdriveSettings"`
-	SocketSettings      *SocketConfig      `json:"sockopt"`
+	Address           *Address           `json:"address"`
+	Port              uint16             `json:"port"`
+	Method            *TransportProtocol `json:"method"`
+	Network           *TransportProtocol `json:"network"`
+	Security          string             `json:"security"`
+	FinalMask         *FinalMask         `json:"finalmask"`
+	TLSSettings       *TLSConfig         `json:"tlsSettings"`
+	REALITYSettings   *REALITYConfig     `json:"realitySettings"`
+	RAWSettings       *TCPConfig         `json:"rawSettings"`
+	TCPSettings       *TCPConfig         `json:"tcpSettings"`
+	XHTTPSettings     *SplitHTTPConfig   `json:"xhttpSettings"`
+	SplitHTTPSettings *SplitHTTPConfig   `json:"splithttpSettings"`
+	SocketSettings    *SocketConfig      `json:"sockopt"`
 }
 
 // Build implements Buildable.
@@ -103,8 +79,8 @@ func (c *StreamConfig) Build() (*internet.StreamConfig, error) {
 		config.SecuritySettings = append(config.SecuritySettings, tm)
 		config.SecurityType = tm.Type
 	case "reality":
-		if config.ProtocolName != "tcp" && config.ProtocolName != "splithttp" && config.ProtocolName != "grpc" {
-			return nil, errors.New("REALITY only supports RAW, XHTTP and gRPC for now.")
+		if config.ProtocolName != "tcp" && config.ProtocolName != "splithttp" {
+			return nil, errors.New("REALITY only supports RAW and XHTTP.")
 		}
 		if c.REALITYSettings == nil {
 			return nil, errors.New(`REALITY: Empty "realitySettings".`)
@@ -148,76 +124,6 @@ func (c *StreamConfig) Build() (*internet.StreamConfig, error) {
 			Settings:     serial.ToTypedMessage(hs),
 		})
 	}
-	if c.KCPSettings != nil {
-		ts, err := c.KCPSettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build mKCP config.").Base(err)
-		}
-		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
-			ProtocolName: "mkcp",
-			Settings:     serial.ToTypedMessage(ts),
-		})
-	}
-	if c.GRPCSettings != nil {
-		gs, err := c.GRPCSettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build gRPC config.").Base(err)
-		}
-		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
-			ProtocolName: "grpc",
-			Settings:     serial.ToTypedMessage(gs),
-		})
-	}
-	if c.WSSettings != nil {
-		ts, err := c.WSSettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build WebSocket config.").Base(err)
-		}
-		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
-			ProtocolName: "websocket",
-			Settings:     serial.ToTypedMessage(ts),
-		})
-	}
-	if c.HTTPUPGRADESettings != nil {
-		hs, err := c.HTTPUPGRADESettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build HTTPUpgrade config.").Base(err)
-		}
-		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
-			ProtocolName: "httpupgrade",
-			Settings:     serial.ToTypedMessage(hs),
-		})
-	}
-	if c.HysteriaSettings != nil {
-		hs, err := c.HysteriaSettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build Hysteria config.").Base(err)
-		}
-		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
-			ProtocolName: "hysteria",
-			Settings:     serial.ToTypedMessage(hs),
-		})
-	}
-	if c.MASQUESettings != nil {
-		ms, err := c.MASQUESettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build MASQUE config.").Base(err)
-		}
-		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
-			ProtocolName: "masque",
-			Settings:     serial.ToTypedMessage(ms),
-		})
-	}
-	if c.XDRIVESettings != nil {
-		xs, err := c.XDRIVESettings.Build()
-		if err != nil {
-			return nil, errors.New("Failed to build XDRIVE config.").Base(err)
-		}
-		config.TransportSettings = append(config.TransportSettings, &internet.TransportConfig{
-			ProtocolName: "xdrive",
-			Settings:     serial.ToTypedMessage(xs),
-		})
-	}
 	if c.SocketSettings != nil {
 		ss, err := c.SocketSettings.Build()
 		if err != nil {
@@ -227,19 +133,8 @@ func (c *StreamConfig) Build() (*internet.StreamConfig, error) {
 	}
 
 	if c.FinalMask != nil {
-		for _, mask := range c.FinalMask.Tcp {
-			u, err := mask.Build(true)
-			if err != nil {
-				return nil, errors.New("failed to build mask with type ", mask.Type).Base(err)
-			}
-			config.Tcpmasks = append(config.Tcpmasks, serial.ToTypedMessage(u))
-		}
-		for _, mask := range c.FinalMask.Udp {
-			u, err := mask.Build(false)
-			if err != nil {
-				return nil, errors.New("failed to build mask with type ", mask.Type).Base(err)
-			}
-			config.Udpmasks = append(config.Udpmasks, serial.ToTypedMessage(u))
+		if len(c.FinalMask.Tcp) > 0 || len(c.FinalMask.Udp) > 0 {
+			return nil, errors.New(`finalmask tcp/udp masks are not supported in this build`)
 		}
 		if c.FinalMask.QuicParams != nil {
 			profile := strings.ToLower(c.FinalMask.QuicParams.BbrProfile)

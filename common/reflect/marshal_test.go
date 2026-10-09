@@ -10,13 +10,13 @@ import (
 	. "github.com/xtls/xray-core/common/reflect"
 	cserial "github.com/xtls/xray-core/common/serial"
 	iserial "github.com/xtls/xray-core/infra/conf/serial"
-	"github.com/xtls/xray-core/proxy/shadowsocks"
+	"github.com/xtls/xray-core/proxy/vless"
 )
 
 func TestMashalAccount(t *testing.T) {
-	account := &shadowsocks.Account{
-		Password:   "shadowsocks-password",
-		CipherType: shadowsocks.CipherType_CHACHA20_POLY1305,
+	account := &vless.Account{
+		Id:   "27848739-7e62-4138-9fd3-098a63964b6b",
+		Flow: "xtls-rprx-vision",
 	}
 
 	user := &protocol.User{
@@ -30,7 +30,7 @@ func TestMashalAccount(t *testing.T) {
 		t.Error("marshal account failed")
 	}
 
-	kws := []string{"CHACHA20_POLY1305", "cipherType", "shadowsocks-password"}
+	kws := []string{"xtls-rprx-vision", "flow", "27848739-7e62-4138-9fd3-098a63964b6b"}
 	for _, kw := range kws {
 		if !strings.Contains(j, kw) {
 			t.Error("marshal account failed")
@@ -154,35 +154,19 @@ func getConfig() string {
   "inbounds": [
     {
       "tag": "agentin",
-      "protocol": "http",
+      "protocol": "socks",
       "port": 18080,
       "listen": "127.0.0.1",
       "settings": {}
-    },
-    {
-      "listen": "127.0.0.1",
-      "port": 10085,
-      "protocol": "dokodemo-door",
-      "settings": {
-        "address": "127.0.0.1"
-      },
-      "tag": "api-in"
     }
   ],
-  "api": {
-    "tag": "api",
-    "services": [
-      "HandlerService",
-      "StatsService"
-    ]
-  },
   "routing": {
     "rules": [
       {
         "inboundTag": [
-          "api-in"
+          "agentin"
         ],
-        "outboundTag": "api"
+        "outboundTag": "XHTTP_IN"
       }
     ],
     "domainStrategy": "AsIs"

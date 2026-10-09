@@ -4,10 +4,7 @@ import (
 	"context"
 	sync "sync"
 
-	"github.com/xtls/xray-core/app/observatory"
-	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/errors"
-	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/extension"
 	"github.com/xtls/xray-core/features/outbound"
 )
@@ -23,20 +20,13 @@ type BalancingPrincipleTarget interface {
 type RoundRobinStrategy struct {
 	FallbackTag string
 
-	ctx         context.Context
-	observatory extension.Observatory
-	mu          sync.Mutex
-	index       int
+	ctx   context.Context
+	mu    sync.Mutex
+	index int
 }
 
 func (s *RoundRobinStrategy) InjectContext(ctx context.Context) {
 	s.ctx = ctx
-	if len(s.FallbackTag) > 0 {
-		common.Must(core.RequireFeatures(s.ctx, func(observatory extension.Observatory) error {
-			s.observatory = observatory
-			return nil
-		}))
-	}
 }
 
 func (s *RoundRobinStrategy) GetPrincipleTarget(strings []string) []string {
@@ -44,31 +34,6 @@ func (s *RoundRobinStrategy) GetPrincipleTarget(strings []string) []string {
 }
 
 func (s *RoundRobinStrategy) PickOutbound(tags []string) string {
-	if s.observatory != nil {
-		observeReport, err := s.observatory.GetObservation(s.ctx)
-		if err == nil {
-			aliveTags := make([]string, 0)
-			if result, ok := observeReport.(*observatory.ObservationResult); ok {
-				status := result.Status
-				statusMap := make(map[string]*observatory.OutboundStatus)
-				for _, outboundStatus := range status {
-					statusMap[outboundStatus.OutboundTag] = outboundStatus
-				}
-				for _, candidate := range tags {
-					if outboundStatus, found := statusMap[candidate]; found {
-						if outboundStatus.Alive {
-							aliveTags = append(aliveTags, candidate)
-						}
-					} else {
-						// unfound candidate is considered alive
-						aliveTags = append(aliveTags, candidate)
-					}
-				}
-				tags = aliveTags
-			}
-		}
-	}
-
 	n := len(tags)
 	if n == 0 {
 		// goes to fallbackTag
