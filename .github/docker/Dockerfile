@@ -26,19 +26,14 @@ RUN cat <<EOF >/tmp/usr/local/etc/xray/00_log.json
   }
 }
 EOF
-RUN echo '{}' >/tmp/usr/local/etc/xray/01_api.json
 RUN echo '{}' >/tmp/usr/local/etc/xray/02_dns.json
 RUN echo '{}' >/tmp/usr/local/etc/xray/03_routing.json
 RUN echo '{}' >/tmp/usr/local/etc/xray/04_policy.json
 RUN echo '{}' >/tmp/usr/local/etc/xray/05_inbounds.json
 RUN echo '{}' >/tmp/usr/local/etc/xray/06_outbounds.json
 RUN echo '{}' >/tmp/usr/local/etc/xray/07_stats.json
-RUN echo '{}' >/tmp/usr/local/etc/xray/08_fakedns.json
-RUN echo '{}' >/tmp/usr/local/etc/xray/09_metrics.json
-RUN echo '{}' >/tmp/usr/local/etc/xray/10_observatory.json
 RUN echo '{}' >/tmp/usr/local/etc/xray/11_geodata.json
 RUN echo '{}' >/tmp/usr/local/etc/xray/12_env.json
-RUN echo '{}' >/tmp/usr/local/etc/xray/99_version.json
 
 # Create log files
 RUN mkdir -p /tmp/var/log/xray && touch \

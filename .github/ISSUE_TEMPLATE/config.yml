@@ -1,4 +1,4 @@
 contact_links:
-  - name: Community Support and Questions
+  - name: Upstream Xray-core discussions
     url: https://github.com/XTLS/Xray-core/discussions
-    about: Please ask and answer questions there. The issue tracker is for issues with core.
+    about: General protocol and configuration questions are best asked upstream. This tracker is for problems specific to xray-lite.

@@ -1,5 +1,5 @@
 name: Bug report
-description: "Submit Xray-core bug"
+description: "Submit xray-lite bug"
 body:
   - type: checkboxes
     attributes:
