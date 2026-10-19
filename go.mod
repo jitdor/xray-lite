@@ -6,7 +6,7 @@ require (
 	github.com/cloudflare/circl v1.6.5
 	github.com/golang/mock v1.7.0-rc.1
 	github.com/google/go-cmp v0.7.0
-	github.com/klauspost/cpuid/v2 v2.4.0
+	github.com/klauspost/cpuid/v2 v2.4.1
 	github.com/miekg/dns v1.1.73
 	github.com/pires/go-proxyproto v0.15.0
 	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af
